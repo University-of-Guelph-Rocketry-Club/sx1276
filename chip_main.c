@@ -1,10 +1,11 @@
-#include "sx1276_main.h"
+#include "chip_main.h"
 
 /**
   * @brief SX1276 entry point, called from Core/Src/main.c. Validates the SX1276 ID then configures the chip for LoRa mode and CRC generation, then halts.
   */
 SPI_Status sx1276_entry()
 {
+    Radio_Chip_Ctx chip = {};
     //
     // Get version ID from the chip then go into LoRa + Standby mode. If ID is bad, exit immediately.
     //
@@ -20,6 +21,7 @@ SPI_Status sx1276_entry()
         return SPI_BAD_ID;
     } else {
         // Green LED on.
+        chip.id = version;
         HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
     }
 
@@ -128,7 +130,7 @@ void sx1276_transmit_packet(Packet p)
  * @param  p Out pointer for the received packet
  * @return Packet reception status
  */
-Packet sx1276_receive_packet(Packet *p)
+Packet_RX_Status sx1276_receive_packet(packet *p)
 {
     // NOTE: After receiving the packet, we are put into standby mode.
     // Steps (Section 4.1.6):
@@ -142,13 +144,40 @@ Packet sx1276_receive_packet(Packet *p)
     //    3.1.1.2. If no errors, then set RegFifoAddrPtr to RegFifoRxCurrentAddr, then read RegFifo over SPI, RegRxNbBytes times (number of bytes received).
     //    - NOTE: Use a 256-byte long buffer and copy the data over. TODO: Maybe add this reception buffer to the chip config struct?
     //  3.2. If RxTimeout, clear the interrupt by writing '1' to the RegIrqFlags register (0x12, 7th bit) then exit.
+
+    // Decode big endian 64-bit packet ID tp little endian.
+    uint64_t packet_id_be = p.header.packet_id;
+    uint8_t packet_id_le_as_bytes[8] = {0};
+    uint32_t packet_len = USER_ARRAY_LEN(packet_id_le_as_bytes)
+    uint8_t shift = 56;
+    for (int i = 0; i < packet_len; i++, shift -= 8) {
+        uint8_t shifted_id = packet_id_be >> shift;
+        uint8_t next_byte = shifted_id & 0xFFu;
+        // TODO: Check if this is right; we store the MSB as the last element here (little endian is LSB first/in 8th index right?)
+        packet_id_le_as_bytes[packet_len-i] = next_byte;
+    }
+    uint64_t packet_id_le = (uint64_t)*packet_id_le_as_bytes;
+    
+    // Decode big endian 16-bit CRC hash tp little endian.
+    uint64_t crc_be = p.crc; // TODO: Check if this is the right name
+    uint8_t crc_le_as_bytes[2] = {0};
+    uint32_t crc_len = USER_ARRAY_LEN(crc_le_as_bytes)
+    uint8_t shift = 8;
+    for (int i = 0; i < crc_len; i++, shift -= 8) {
+        uint8_t shifted_crc = crc_be >> shift;
+        uint8_t next_byte = shifted_crc & 0xFFu;
+        // TODO: Check if this is right; we store the MSB as the last element here (little endian is LSB first/in 8th index right?)
+        crc_le_as_bytes[i] = next_byte;
+    }
+    uint16_t crc_le = (uint16_t)*crc_le_as_bytes;
 }
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
+  * @param  crc CRC hash of the received packet
   * @return Whether the CRC hash is valid or not
   */
-bool sx1276_is_last_packet_valid()
+bool sx1276_is_last_packet_valid(uint16_t crc)
 {
     // TODO: Check CRC hash inside of packed payload through MANTLE protocol
 }

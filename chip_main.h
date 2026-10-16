@@ -17,27 +17,11 @@ const uint32_t SPI_MAX_RETRY_DELAY = 10; // 10ms TX retry delay
 
 extern SPI_HandleTypeDef hspi2;
 
-// General SX1276 data. TODO: Actually use this? Depends on what data we may save during packet transactions with the ground station.
+// General SX1276 data.
+// TODO: Send this around to functions that need this data.
 typedef struct {
-    SPI_HandleTypeDef *spi;
-    HAL_StatusTypeDef ok;
-    uint8_t op_mode;
-} Radio_Chip_Config;
-
-// An explicit (default) LoRa packet header.
-typedef struct {
-    uint8_t payload_length;
-    uint8_t forward_error_correction_code_rate; // maximum value of 4/8
-    uint16_t crc_hash; // Optional, set "through the bit RxPayloadCrcOn in the register RegModemConfig1" (Section 4.1.1.6).
-} LoRa_Explicit_Header;
-
-// A LoRa packet sent over the air.
-// FIXME: This format is not correct! It will be whatever we end up sending over the air through our MANTLE (https://github.com/University-of-Guelph-Rocketry-Club/MANTLE) protocol.
-typedef struct {
-    uint8_t preamble[6];
-    LoRa_Explicit_Header header;
-    uint8_t payload[256]; // FIFO Data Buffer (Section 4.1.2.3) is 256 bytes long and contains our payload, so this will be the max for now.
-} Packet;
+    uint8_t id;
+} Radio_Chip_Ctx;
 
 // General status codes for SX1276 SPI transactions.
 typedef enum {
@@ -53,7 +37,7 @@ typedef enum {
     PACKET_TIMEOUT,
     PACKET_CRC_INVALID,
     PACKET_BAD_HEADER,
-} SPI_Status;
+} Packet_RX_Status;
 
 /**
   * @brief SX1276 entry point, called from Core/Src/main.c. Validates the SX1276 ID then configures the chip for LoRa mode and CRC generation, then halts.
@@ -87,20 +71,21 @@ SPI_Status sx1276_transmit_receieve(SPI_HandleTypeDef *hspi, const uint8_t *to_s
  * @brief Transmit a LoRa packet 'p' over the air.
  * @param p Packet to transmit
  */
-void sx1276_transmit_packet(LoRa_Packet p);
+void sx1276_transmit_packet(packet p);
 
 /**
  * @brief  Transmit a LoRa packet 'p' over the air.
  * @param  p Out pointer for the received packet
  * @return Packet reception status
  */
-Packet_Status sx1276_receive_packet(LoRa_Packet *p)
+Packet_RX_Status sx1276_receive_packet(packet *p)
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
+  * @param  crc CRC hash of the received packet
   * @return Whether the CRC hash is valid or not
   */
-bool sx1276_is_last_packet_valid();
+bool sx1276_is_last_packet_valid(uint16_t crc);
 
 /**
   * @brief Reset the SX1276. See Section 5.2.2 for more details.
