@@ -15,5 +15,5 @@ Radio chip driver for the UoG Rocketry club.
 # Building and Flashing
 ```sh
 make
-st-flash write driver.bin
+st-flash write driver.bin 0x8000000
 ```

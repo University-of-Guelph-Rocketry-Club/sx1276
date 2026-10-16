@@ -1,7 +1,9 @@
-#include "chip_main.h"
+#include "sx1276_main.h"
 
-// SX1276 entry point, called from Core/Src/main.c. Validates the SX1276 ID then configures the chip for LoRa mode and CRC generation, then halts.
-Spi_Status chip_entry()
+/**
+  * @brief SX1276 entry point, called from Core/Src/main.c. Validates the SX1276 ID then configures the chip for LoRa mode and CRC generation, then halts.
+  */
+SPI_Status sx1276_entry()
 {
     //
     // Get version ID from the chip then go into LoRa + Standby mode. If ID is bad, exit immediately.
@@ -10,7 +12,9 @@ Spi_Status chip_entry()
     uint8_t address_byte = REG_VERSION;
     SET_READABLE(address_byte, 7); // Set wnr to READ (0)
     uint8_t version = 0xcc;
-    HAL_StatusTypeDef ok = HAL_SPI_TransmitReceive(&hspi2, &address_byte, &version, 1*sizeof(uint8_t), SPI_MAX_TIMEOUT);
+    if (sx1276_transmit_receive(hspi2, &address_byte, &version, 1, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+
+    // Check version ID (0x12 is default)
     if (version == 0x00 || version == 0xFF) {
         printf("Bad version ID: %#02x\n", version);
         return SPI_BAD_ID;
@@ -23,11 +27,7 @@ Spi_Status chip_entry()
     address_byte = REG_OPMODE;
     SET_READABLE(address_byte); // Set wnr to READ (0)
     uint8_t op_mode = 0;
-    while (1) {
-        ok = HAL_SPI_TransmitReceive(&hspi2, &address_byte, &op_mode, 1*sizeof(uint8_t), SPI_MAX_TIMEOUT);
-        if (ok == HAL_OK) break;
-        HAL_Delay(SPI_TX_DELAY);
-    }
+    if (sx1276_transmit_receive(hspi2, &address_byte, &op_mode, 1, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
     printf("Got op mode: %#08x\n", op_mode);
 
     // Go into LoRa mode by first entering SLEEP mode then setting the 7th bit (MSB) of the RegOpMode register (0x01). See Section 4.4 of the datasheet.
@@ -43,14 +43,11 @@ Spi_Status chip_entry()
     uint8_t stdby_tx[2]  = {address_byte, standby_data};
 
     // Go into SLEEP mode first to *then* go into LoRa mode.
-    ok = HAL_SPI_Transmit(&hspi2, sleep_tx, 2*sizeof(uint8_t), SPI_MAX_TIMEOUT); 
-    if (ok != HAL_OK) return SPI_GENERAL_ERROR;
-    ok = HAL_SPI_Transmit(&hspi2, lora_tx, 2*sizeof(uint8_t), SPI_MAX_TIMEOUT); 
-    if (ok != HAL_OK) return SPI_GENERAL_ERROR;
+    if (sx1276_tramsmit(&hspi2, sleep_tx, 2, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (sx1276_transmit(&hspi2, lora_tx, 2, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
   
     // Set op mode to standby again, but now with LoRa on.
-    ok = HAL_SPI_Transmit(&hspi2, stdby_tx, 2*sizeof(uint8_t), SPI_MAX_TIMEOUT); 
-    if (ok != HAL_OK) return SPI_GENERAL_ERROR;
+    if (sx1276_transmit(&hspi2, stdby_tx, 2, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
     printf("In LoRa mode, standing by: op mode: %#08x\n", standby_data);
 
     //
@@ -61,8 +58,60 @@ Spi_Status chip_entry()
     while (1) {}
 }
 
-// Transmit a LoRa packet 'p' over the wire.
-void chip_transmit_packet(LoRa_Packet p)
+/**
+  * @brief  Transmit data over SPI to the SX1276.
+  * @param  hspi pointer to a SPI module configuration structure
+  * @param  to_send Pointer to the data to send over SPI
+  * @param  length Number of data elements to be sent
+  * @param  spi_tx_timeout Transaction timeout
+  * @param  spi_delay_timeout Transaction replay delay, in case of errors
+  * @retval SPI transaction status
+  */
+SPI_Status sx1276_transmit(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint16_t length, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
+{
+    HAL_StatusTypeDef res = 0;
+    // TODO: Should we have a max number of transaction retries before giving up and returning SPI_TIMEOUT maybe/
+    while (1) {
+        res = HAL_SPI_Transmit(hspi, to_send, length, spi_tx_timeout);
+        // FIXME: Should we only exit when we are HAL_OK? Any special handling for HAL_ERROR/HAL_BUSY/HAL_TIMEOUT?
+        if (res != HAL_OK) {
+            HAL_Delay(spi_delay_timeout);
+        } else {
+            return SPI_OK;
+        }
+    }
+}
+
+/**
+  * @brief  Transmit address byte and receieve data over SPI to the SX1276.
+  * @param  hspi pointer to a SPI module configuration structure
+  * @param  to_send Pointer to the data to send over SPI
+  * @param  to_recv Pointer to storage for received data over SPI
+  * @param  length Number of data elements to be sent/received
+  * @param  spi_tx_timeout Transaction timeout
+  * @param  spi_delay_timeout Transaction replay delay, in case of errors
+  * @retval SPI transaction status
+  */
+SPI_Status sx1276_transmit_receieve(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint16_t length, uint32_t spi_tx_timeout, uint32_t spi_retru_delay)
+{
+    HAL_StatusTypeDef res = 0;
+    // TODO: Should we have a max number of transaction retries before giving up and returning SPI_TIMEOUT maybe/
+    while (1) {
+        res = HAL_SPI_TransmitReceive(hspi, to_send, to_recv, length, spi_tx_timeout);
+        // FIXME: Should we only exit when we are HAL_OK? Any special handling for HAL_ERROR/HAL_BUSY/HAL_TIMEOUT?
+        if (res != HAL_OK) {
+            HAL_Delay(spi_delay_timeout);
+        } else {
+            return SPI_OK;
+        }
+    }
+}
+
+/**
+ * @brief Transmit a LoRa packet 'p' over the air.
+ * @param p Packet to transmit
+ */
+void sx1276_transmit_packet(Packet p)
 {
     // NOTE: After sending the packet, we are put into standby mode.
     // Steps (Section 4.1.6):
@@ -74,8 +123,12 @@ void chip_transmit_packet(LoRa_Packet p)
     // 4. Wait until IRQ TxDone
 }
 
-// Receive a LoRa packet from another radio over the wire.
-LoRa_Packet chip_receive_packet(LoRa_Packet p)
+/**
+ * @brief  Transmit a LoRa packet 'p' over the air.
+ * @param  p Out pointer for the received packet
+ * @return Packet reception status
+ */
+Packet sx1276_receive_packet(Packet *p)
 {
     // NOTE: After receiving the packet, we are put into standby mode.
     // Steps (Section 4.1.6):
@@ -91,14 +144,19 @@ LoRa_Packet chip_receive_packet(LoRa_Packet p)
     //  3.2. If RxTimeout, clear the interrupt by writing '1' to the RegIrqFlags register (0x12, 7th bit) then exit.
 }
 
-// Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
-bool chip_is_last_packet_valid()
+/**
+  * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
+  * @return Whether the CRC hash is valid or not
+  */
+bool sx1276_is_last_packet_valid()
 {
     // TODO: Check CRC hash inside of packed payload through MANTLE protocol
 }
 
-// Reset the SX1276. See Section 5.2.2 for more details.
-void chip_reset()
+/**
+  * @brief Reset the SX1276. See Section 5.2.2 for more details.
+  */
+void sx1276_reset()
 {
     // Pull Pin 7 low for 100us, then release, then delay for 5ms.
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
