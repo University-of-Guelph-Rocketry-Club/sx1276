@@ -1,35 +1,63 @@
 #include "Core/Inc/main.h"
+#include "proto/txrx-proto.h"
+#include "proto/checksum.h"
 #include <stdbool.h>
 
-// See Section 4.4 of the datasheet for all register addresses.
-#define REG_VERSION      (0x42)
-#define REG_OPMODE       (0x01)
-#define REG_MODEMCONFIG2 (0x1E)
+// See Section 4.4 of the datasheet for all register addresses and op mode constants.
+#define REG_VERSION        (0x42)
+#define REG_OPMODE         (0x01)
+#define REG_MODEMCONFIG2   (0x1E)
+#define REG_FIFOADDRPTR    (0x0D)
+#define REG_FIFOTXBASEADDR (0x0E)
+#define REG_FIFORXBASEADDR (0x0F)
+#define REG_FIFO           (0x00)
+#define REG_PAYLOADLENGTH  (0x22)
+#define REG_IRQFLAGS       (0x12)
+#define OPMODE_TX          (0b11111011)
+#define OPMODE_STDBY       (0b11111001)
+#define OPMODE_SLEEP       (0b11111000)
+#define OPMODE_RXSINGLE    (0b11111110)
 
 // User macros/constants
 #define USER_SET_BIT(byte, nBit) (byte |= (1 << nBit))
+// TODO: Is this shift and mask good?
+#define USER_GET_BIT(byte, nBit) ((byte >> nBit) & 0b00000001)
 #define USER_CLEAR_BIT(byte, nBit) (byte &= ~(1 << nBit))
 #define USER_ARRAY_LEN(array) (sizeof(array) / sizeof(array[0]))
+#define SET_OPMODE(op_mode, new_op_mode) (op_mode & new_op_mode)
 #define SET_READABLE(address_byte) USER_CLEAR_BIT(address_byte, 7)
 #define SET_WRITEABLE(address_byte) USER_SET_BIT(address_byte, 7)
-const uint32_t SPI_MAX_TX_TIMEOUT  = 10; // 10ms delay for TX timeout
-const uint32_t SPI_MAX_RETRY_DELAY = 10; // 10ms TX retry delay
+const uint8_t SPI_MAX_TX_TIMEOUT  = 10; // 10ms delay for TX timeout
+const uint8_t SPI_MAX_RETRY_DELAY = 10; // 10ms TX retry delay
+const uint8_t SPI_MAX_RETRIES     = 1;  // Max amount of TX retries. FIXME: Change this once Aban gets back about a good value for this.
 
+// SPI handle initialized through the STM32 generated code.
 extern SPI_HandleTypeDef hspi2;
 
 // General SX1276 data.
 // TODO: Send this around to functions that need this data.
 typedef struct {
-    uint8_t id;
+    uint8_t id;   // Version and recipient ID (for when transmitting packets)
+    uint8_t mode; // Operation mode
 } Radio_Chip_Ctx;
 
 // General status codes for SX1276 SPI transactions.
 typedef enum {
     SPI_OK,
+    SPI_ERROR,
     SPI_TIMEOUT,
-    SPI_GENERAL_ERROR,
-    SPI_BAD_ID
+    SPI_BUSY,
+    SPI_BAD_ID,
+    SPI_STATUS_COUNT,
 } SPI_Status;
+
+// Compatibility between "custom" statuses and the HAL default ones.
+SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT] = {
+    [HAL_OK]      = SPI_OK,
+    [HAL_ERROR]   = SPI_ERROR,
+    [HAL_BUSY]    = SPI_BUSY,
+    [HAL_TIMEOUT] = SPI_TIMEOUT,
+}
 
 // General status codes for SX1276 RF transactions.
 typedef enum {
@@ -45,47 +73,52 @@ typedef enum {
 SPI_Status sx1276_entry();
 
 /**
-  * @brief  Transmit data over SPI to the SX1276.
-  * @param  hspi pointer to a SPI module configuration structure
-  * @param  to_send Pointer to the data to send over SPI
-  * @param  length Number of data elements to be sent
-  * @param  spi_tx_timeout Transaction timeout
-  * @param  spi_delay_timeout Transaction replay delay, in case of errors
-  * @retval SPI transaction status
-  */
-SPI_Status sx1276_transmit(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint16_t size, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
-
-/**
   * @brief  Transmit address byte and receieve data over SPI to the SX1276.
   * @param  hspi pointer to a SPI module configuration structure
   * @param  to_send Pointer to the data to send over SPI
   * @param  to_recv Pointer to storage for received data over SPI
-  * @param  length Number of data elements to be sent/received
   * @param  spi_tx_timeout Transaction timeout
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_transmit_receieve(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint16_t length, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
+SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay);
 
 /**
- * @brief Transmit a LoRa packet 'p' over the air.
- * @param p Packet to transmit
+  * @brief  Transmit data over SPI to the SX1276.
+  * @param  hspi pointer to a SPI module configuration structure
+  * @param  to_send Pointer to the data to send over SPI
+  * @param  spi_tx_timeout Transaction timeout
+  * @param  spi_delay_timeout Transaction replay delay, in case of errors
+  * @retval SPI transaction status
+  */
+SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
+
+/**
+ * @brief Transmit a LoRa packet over the air.
+ * @param ctx Chip context
+ * @param p   Packet to transmit
  */
-void sx1276_transmit_packet(packet p);
+void sx1276_transmit_packet(Radio_Chip_Ctx ctx);
 
 /**
- * @brief  Transmit a LoRa packet 'p' over the air.
- * @param  p Out pointer for the received packet
+ * @brief  Receive a LoRa packet over the air.
  * @return Packet reception status
  */
-Packet_RX_Status sx1276_receive_packet(packet *p)
+Packet_RX_Status sx1276_receive_packet()
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
-  * @param  crc CRC hash of the received packet
+  * @param  checksum CRC hash of the received packet
   * @return Whether the CRC hash is valid or not
   */
-bool sx1276_is_last_packet_valid(uint16_t crc);
+bool sx1276_is_last_packet_valid(uint16_t checksum);
+
+/**
+  * @brief  Checks if the TxDone interrupt is tripped.
+  * @param  ctx Chip context
+  * @return True if interrupt is set and false otherwise. 
+  */
+bool sx1276_is_tx_done(Radio_Chip_Ctx ctx);
 
 /**
   * @brief Reset the SX1276. See Section 5.2.2 for more details.

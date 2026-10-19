@@ -13,7 +13,7 @@ SPI_Status sx1276_entry()
     uint8_t address_byte = REG_VERSION;
     SET_READABLE(address_byte, 7); // Set wnr to READ (0)
     uint8_t version = 0xcc;
-    if (sx1276_transmit_receive(hspi2, &address_byte, &version, 1, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (sx1276_read(hspi2, &address_byte, &version, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
 
     // Check version ID (0x12 is default)
     if (version == 0x00 || version == 0xFF) {
@@ -29,13 +29,13 @@ SPI_Status sx1276_entry()
     address_byte = REG_OPMODE;
     SET_READABLE(address_byte); // Set wnr to READ (0)
     uint8_t op_mode = 0;
-    if (sx1276_transmit_receive(hspi2, &address_byte, &op_mode, 1, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (sx1276_read(hspi2, &address_byte, &op_mode, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
     printf("Got op mode: %#08x\n", op_mode);
 
     // Go into LoRa mode by first entering SLEEP mode then setting the 7th bit (MSB) of the RegOpMode register (0x01). See Section 4.4 of the datasheet.
-    uint8_t sleep_data   = op_mode & 0b11111000;   // Last 3 bits are 000 to go into SLEEP mode.
-    uint8_t lora_data    = sleep_data | (1<<7);    // Set MSB to 1 to go into LoRa mode.
-    uint8_t standby_data = lora_data & 0b11111001; // Go back into STDBY (001) mode.
+    uint8_t sleep_data   = SET_OPMODE(op_mode, OPMODE_SLEEP); // Last 3 bits are 000 to go into SLEEP mode.
+    uint8_t lora_data    = sleep_data; USER_SET_BIT(lora_data, 7); // Set MSB to 1 to go into LoRa mode.
+    uint8_t standby_data = SET_OPMODE(lora_data, OPMODE_STDBY); // Go back into STDBY (001) mode.
     
     // Set the address for RegOpMode with write permissions.
     address_byte = REG_OPMODE;
@@ -45,12 +45,25 @@ SPI_Status sx1276_entry()
     uint8_t stdby_tx[2]  = {address_byte, standby_data};
 
     // Go into SLEEP mode first to *then* go into LoRa mode.
-    if (sx1276_tramsmit(&hspi2, sleep_tx, 2, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
-    if (sx1276_transmit(&hspi2, lora_tx, 2, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
+    if (sx1276_write(&hspi2, sleep_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (sx1276_write(&hspi2, lora_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
   
-    // Set op mode to standby again, but now with LoRa on.
-    if (sx1276_transmit(&hspi2, stdby_tx, 2, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
+    // Set op mode to standby again, but now with LoRa on. Save the mode too.
+    if (sx1276_write(&hspi2, stdby_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
     printf("In LoRa mode, standing by: op mode: %#08x\n", standby_data);
+    ctx.mode = standby_data;
+    
+    // Configure TX FIFO pointer to point to base (0).
+    uint8_t address_byte = REG_FIFOTXBASEADDR;
+    SET_WRITEABLE(address_byte);
+    uint8_t fifoptraddr_set_tx = { address_byte, 0x00 };
+    if (sx1276_write(hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+
+    // Configure RX FIFO pointer to point to base (0).
+    address_byte = REG_FIFORXBASEADDDR;
+    SET_WRITEABLE(address_byte);
+    fifoptraddr_set_tx[0] = address_byte;
+    if (sx1276_write(hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
 
     //
     // NOTE: Frequency is already set at 434MHz by default, so we won't even change it.
@@ -64,24 +77,26 @@ SPI_Status sx1276_entry()
   * @brief  Transmit data over SPI to the SX1276.
   * @param  hspi pointer to a SPI module configuration structure
   * @param  to_send Pointer to the data to send over SPI
-  * @param  length Number of data elements to be sent
   * @param  spi_tx_timeout Transaction timeout
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_transmit(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint16_t length, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
+SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
 {
     HAL_StatusTypeDef res = 0;
-    // TODO: Should we have a max number of transaction retries before giving up and returning SPI_TIMEOUT maybe/
-    while (1) {
-        res = HAL_SPI_Transmit(hspi, to_send, length, spi_tx_timeout);
-        // FIXME: Should we only exit when we are HAL_OK? Any special handling for HAL_ERROR/HAL_BUSY/HAL_TIMEOUT?
+    // FIXME: Change this once Aban gets back about a good value for this.
+    uint8_t retries = 0;
+    while (retries != SPI_MAX_RETRIES) {
+        // Always sending the address and value to write.
+        res = HAL_SPI_Transmit(hspi, to_send, 2, spi_tx_timeout);
         if (res != HAL_OK) {
             HAL_Delay(spi_delay_timeout);
         } else {
             return SPI_OK;
         }
+        retries += 1;
     }
+    return SPI_STATUS_MAP[res];
 }
 
 /**
@@ -89,49 +104,93 @@ SPI_Status sx1276_transmit(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint
   * @param  hspi pointer to a SPI module configuration structure
   * @param  to_send Pointer to the data to send over SPI
   * @param  to_recv Pointer to storage for received data over SPI
-  * @param  length Number of data elements to be sent/received
   * @param  spi_tx_timeout Transaction timeout
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_transmit_receieve(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint16_t length, uint32_t spi_tx_timeout, uint32_t spi_retru_delay)
+SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay)
 {
     HAL_StatusTypeDef res = 0;
-    // TODO: Should we have a max number of transaction retries before giving up and returning SPI_TIMEOUT maybe/
+    // FIXME: Change this once Aban gets back about a good value for this.
+    uint8_t retries = 0;
     while (1) {
-        res = HAL_SPI_TransmitReceive(hspi, to_send, to_recv, length, spi_tx_timeout);
-        // FIXME: Should we only exit when we are HAL_OK? Any special handling for HAL_ERROR/HAL_BUSY/HAL_TIMEOUT?
+        // Always sending the address getting some byte value back.
+        res = HAL_SPI_TransmitReceive(hspi, to_send, to_recv, 1, spi_tx_timeout);
         if (res != HAL_OK) {
             HAL_Delay(spi_delay_timeout);
         } else {
             return SPI_OK;
         }
+        retries += 1;
     }
+    return SPI_STATUS_MAP[res];
 }
 
 /**
- * @brief Transmit a LoRa packet 'p' over the air.
- * @param p Packet to transmit
+ * @brief Transmit a LoRa packet over the air.
+ * @param ctx Chip context
+ * @param p   Packet to transmit
  */
-void sx1276_transmit_packet(Packet p)
+void sx1276_write_packet(Radio_Chip_Ctx ctx)
 {
-    // NOTE: After sending the packet, we are put into standby mode.
-    // Steps (Section 4.1.6):
-    // 1. Tx Init
-    // 2. Write data to FIFO buffer over SPI
-    //  2.1. Set FifoPtrAddr to FifoTxPtrBase
-    //  2.2. Write PayloadLength bytes to RegFifo
+    // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
+transmit_retry:
+    // Construct packet. TODO: Determine what the recipient ID should be.
+    packet p = {};
+    uint8_t recipient_id = 0;
+    bool ok = gsc_packet_create_standalone_request(&p, &recipient_id, GSC_RAW_DATA);
+    if (!ok) {
+        goto transmit_retry;
+    }
+
+    // TODO: Set packet size, packet command, and the payload itself (probably depending on the command).
+
+    // Get packet bytes and extract payload length from 15th bit.
+    uint8_t packet_bytes = (*uint8_t)p;
+    uint8_t payload_length = packet_bytes[15];
+    
+    // Write data to FIFO buffer over SPI
+    // 1. Set RegPayloadLength to be the number of bytes to be sent.
+    uint8_t address_byte = REG_PAYLOADLENGTH;
+    SET_WRITEABLE(address_byte);
+    uint8_t payload_length_tx[2] = { address_byte, payload_length };
+    if (sx1276_write(hspi2, payload_length_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
+        goto transmit_retry;
+    }
+
+    // 2. Write RegPayloadLength bytes to RegFifo
+    address_byte = REG_FIFO;
+    SET_WRITEABLE(address_byte);
+    for (int i = 0; i < packet_length; i++) {
+        // NOTE: address_byte SHOULD be automatically incremented, per Section 4.1.2.3.
+        uint8_t payload_write_tx = { address_byte, packet_bytes[i] };
+        if (sx1276_write(hspi2, payload_write_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
+            goto transmit_retry;
+        }
+    }
+
     // 3. Go into TX mode
-    // 4. Wait until IRQ TxDone
+    address_byte = REG_OPMODE;
+    SET_READABLE(address_byte);
+    ctx.mode = SET_OPMODE(ctx.mode, OPMODE_TX);
+    uint8_t tx_mode_tx[2] = { address_byte,  ctx.mode };
+    sx1276_write(hspi2, tx_mode_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
+
+    // 4. Wait until IRQ TxDone before exiting
+    while (!sx1276_is_tx_done()) {
+        continue;
+    }
+
+    // Now in standby mode once TX is done.
 }
 
 /**
- * @brief  Transmit a LoRa packet 'p' over the air.
- * @param  p Out pointer for the received packet
+ * @brief  Transmit a LoRa packet over the air.
  * @return Packet reception status
  */
-Packet_RX_Status sx1276_receive_packet(packet *p)
+Packet_RX_Status sx1276_receive_packet()
 {
+    // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
     // NOTE: After receiving the packet, we are put into standby mode.
     // Steps (Section 4.1.6):
     // 1. Rx Init
@@ -146,6 +205,7 @@ Packet_RX_Status sx1276_receive_packet(packet *p)
     //  3.2. If RxTimeout, clear the interrupt by writing '1' to the RegIrqFlags register (0x12, 7th bit) then exit.
 
     // Decode big endian 64-bit packet ID tp little endian.
+    // TODO: Confirm this all works properly.
     uint64_t packet_id_be = p.header.packet_id;
     uint8_t packet_id_le_as_bytes[8] = {0};
     uint32_t packet_len = USER_ARRAY_LEN(packet_id_le_as_bytes)
@@ -153,33 +213,49 @@ Packet_RX_Status sx1276_receive_packet(packet *p)
     for (int i = 0; i < packet_len; i++, shift -= 8) {
         uint8_t shifted_id = packet_id_be >> shift;
         uint8_t next_byte = shifted_id & 0xFFu;
-        // TODO: Check if this is right; we store the MSB as the last element here (little endian is LSB first/in 8th index right?)
         packet_id_le_as_bytes[packet_len-i] = next_byte;
     }
     uint64_t packet_id_le = (uint64_t)*packet_id_le_as_bytes;
     
     // Decode big endian 16-bit CRC hash tp little endian.
-    uint64_t crc_be = p.crc; // TODO: Check if this is the right name
-    uint8_t crc_le_as_bytes[2] = {0};
-    uint32_t crc_len = USER_ARRAY_LEN(crc_le_as_bytes)
+    // TODO: Confirm this all works properly.
+    uint64_t checksum_be = p.checksum; // TODO: Check if this is the right name
+    uint8_t checksum_le_as_bytes[2] = {0};
+    uint32_t checksum_len = USER_ARRAY_LEN(checksum_le_as_bytes)
     uint8_t shift = 8;
-    for (int i = 0; i < crc_len; i++, shift -= 8) {
-        uint8_t shifted_crc = crc_be >> shift;
-        uint8_t next_byte = shifted_crc & 0xFFu;
-        // TODO: Check if this is right; we store the MSB as the last element here (little endian is LSB first/in 8th index right?)
-        crc_le_as_bytes[i] = next_byte;
+    for (int i = 0; i < checksum_len; i++, shift -= 8) {
+        uint8_t shifted_checksum = checksum_be >> shift;
+        uint8_t next_byte = shifted_checksum & 0xFFu;
+        checksum_le_as_bytes[i] = next_byte;
     }
-    uint16_t crc_le = (uint16_t)*crc_le_as_bytes;
+    uint16_t checksum_le = (uint16_t)*checksum_le_as_bytes;
 }
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
-  * @param  crc CRC hash of the received packet
+  * @param  checksum CRC hash of the received packet
   * @return Whether the CRC hash is valid or not
   */
-bool sx1276_is_last_packet_valid(uint16_t crc)
+bool sx1276_is_last_packet_valid(uint16_t checksum)
 {
     // TODO: Check CRC hash inside of packed payload through MANTLE protocol
+}
+
+/**
+  * @brief  Checks if the TxDone interrupt is tripped.
+  * @return True if interrupt is set and false otherwise. 
+  */
+bool sx1276_is_tx_done()
+{
+    uint8_t address_byte = REG_IRQFLAGS, irqflags = 0;
+    SET_READABLE(address_byte);
+    if (sx1276_read(hspi2, &address_byte, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return false;
+
+    uint8_t txdone = USER_GET_BIT(irqflags, 3);
+    if (txdone) {
+        // TODO: Clear the IRQ
+        return true;
+    }
 }
 
 /**
@@ -188,8 +264,8 @@ bool sx1276_is_last_packet_valid(uint16_t crc)
 void sx1276_reset()
 {
     // Pull Pin 7 low for 100us, then release, then delay for 5ms.
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(CHIP_NRESET_GPIO_Port, CHIP_NRESET_Pin, GPIO_PIN_RESET);
     HAL_Delay(1); // Measured in milliseconds and we can't supply a floating point value.
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(CHIP_NRESET_GPIO_Port, CHIP_NRESET_Pin, GPIO_PIN_SET);
     HAL_Delay(5);
 }
