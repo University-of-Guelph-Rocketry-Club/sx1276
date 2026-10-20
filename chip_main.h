@@ -20,11 +20,11 @@
 
 // User macros/constants
 #define USER_SET_BIT(byte, nBit) (byte |= (1 << nBit))
-// TODO: Is this shift and mask good?
 #define USER_GET_BIT(byte, nBit) ((byte >> nBit) & 0b00000001)
 #define USER_CLEAR_BIT(byte, nBit) (byte &= ~(1 << nBit))
 #define USER_ARRAY_LEN(array) (sizeof(array) / sizeof(array[0]))
-#define SET_OPMODE(op_mode, new_op_mode) (op_mode & new_op_mode)
+// Clears the op mode bits then sets the new ones.
+#define SET_OPMODE(op_mode, new_op_mode) ((op_mode & 0xF8) | (new_op_mode & 0x07))
 #define SET_READABLE(address_byte) USER_CLEAR_BIT(address_byte, 7)
 #define SET_WRITEABLE(address_byte) USER_SET_BIT(address_byte, 7)
 const uint8_t SPI_MAX_TX_TIMEOUT  = 10; // 10ms delay for TX timeout
@@ -35,7 +35,6 @@ const uint8_t SPI_MAX_RETRIES     = 1;  // Max amount of TX retries. FIXME: Chan
 extern SPI_HandleTypeDef hspi2;
 
 // General SX1276 data.
-// TODO: Send this around to functions that need this data.
 typedef struct {
     uint8_t id;   // Version and recipient ID (for when transmitting packets)
     uint8_t mode; // Operation mode
@@ -57,7 +56,7 @@ SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT] = {
     [HAL_ERROR]   = SPI_ERROR,
     [HAL_BUSY]    = SPI_BUSY,
     [HAL_TIMEOUT] = SPI_TIMEOUT,
-}
+};
 
 // General status codes for SX1276 RF transactions.
 typedef enum {
@@ -104,7 +103,7 @@ void sx1276_transmit_packet(Radio_Chip_Ctx ctx);
  * @brief  Receive a LoRa packet over the air.
  * @return Packet reception status
  */
-Packet_RX_Status sx1276_receive_packet()
+Packet_RX_Status sx1276_receive_packet();
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
