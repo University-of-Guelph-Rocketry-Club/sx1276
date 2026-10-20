@@ -1,7 +1,10 @@
 #include "Core/Inc/main.h"
 #include "proto/txrx-proto.h"
 #include "proto/checksum.h"
+#include <assert.h>
 #include <stdbool.h>
+
+#define static local_persist
 
 // See Section 4.4 of the datasheet for all register addresses and op mode constants.
 #define REG_VERSION        (0x42)
@@ -67,7 +70,6 @@ SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT - 1] = {
     [HAL_BUSY]    = SPI_BUSY,
     [HAL_TIMEOUT] = SPI_TIMEOUT,
 };
-#include <assert.h>
 static_assert(USER_ARRAY_LEN(SPI_STATUS_MAP) == 4, "Number of mapped HAL => SPI_Status codes has changed!");
 
 // General status codes for SX1276 RF transactions.
@@ -128,16 +130,18 @@ bool sx1276_is_crc_valid(uint16_t checksum);
 /**
   * @brief  Checks if the TxDone interrupt is tripped.
   * @param  ctx Chip context
+  * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
   * @return True if interrupt is set and false otherwise. 
   */
-bool sx1276_is_tx_done(Radio_Chip_Ctx ctx);
+bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
 
 /**
   * @brief  Checks if the RxDone or RxTimeout interrupt is tripped.
   * @param  ctx Chip context
-  * @return True if either interrupt is set and false otherwise. 
+  * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
+  * @return True if either interrupt is set and false otherwise.
   */
-bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx);
+bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx, SPI_Status *read_status);
 
 /**
   * @brief Reset the SX1276. See Section 5.2.2 for more details.

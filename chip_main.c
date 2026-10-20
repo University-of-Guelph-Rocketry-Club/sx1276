@@ -178,7 +178,7 @@ transmit_retry:
     sx1276_write(&hspi2, tx_mode_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
 
     // 4. Wait until IRQ TxDone before exiting
-    while (!sx1276_is_tx_done()) {
+    while (!sx1276_is_txdone()) {
         continue;
     }
 
@@ -247,12 +247,23 @@ bool sx1276_is_crc_valid(uint16_t checksum)
 
 /**
   * @brief  Checks if the TxDone interrupt is tripped.
+  * @param  ctx Chip context
+  * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
   * @return True if interrupt is set and false otherwise. 
   */
-bool sx1276_is_tx_done()
+bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
 {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0;
-    if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return false;
+    local_persist uint8_t retries = 0;
+    if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
+        retries += 1;
+        if (retries == SPI_MAX_RETRIES) {
+            *read_status = SPI_TIMEOUT;
+            return false;
+        } else {
+            goto irq_retry;
+        }
+    }
 
     uint8_t txdone = USER_GET_BIT(irqflags, TXDONE_BIT);
     if (txdone) {
@@ -267,13 +278,23 @@ bool sx1276_is_tx_done()
 /**
   * @brief  Checks if the RxDone or RxTimeout interrupt is tripped.
   * @param  ctx Chip context
+  * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
   * @return True if either interrupt is set and false otherwise.
   */
-bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx)
+bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx, SPI_Status *read_status)
 {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0;
-    if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return false;
-
+    local_persist uint8_t retries = 0;
+irq_retry:
+    if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
+        retries += 1;
+        if (retries == SPI_MAX_RETRIES) {
+            *read_status = SPI_TIMEOUT;
+            return false;
+        } else {
+            goto irq_retry;
+        }
+    }
     uint8_t rxdone = USER_GET_BIT(irqflags, RXDONE_BIT);
     uint8_t rxtimeout = USER_GET_BIT(irqflags, RXTIMEOUT_BIT);
     if (rxdone || rxtimeout) {
