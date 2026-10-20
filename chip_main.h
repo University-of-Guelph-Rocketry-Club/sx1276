@@ -7,6 +7,8 @@
 #define REG_VERSION        (0x42)
 #define REG_OPMODE         (0x01)
 #define REG_MODEMCONFIG2   (0x1E)
+#define REG_RXNBBYTES      (0x13)
+#define REG_FIFORXCURADDR  (0x10)
 #define REG_FIFOADDRPTR    (0x0D)
 #define REG_FIFOTXBASEADDR (0x0E)
 #define REG_FIFORXBASEADDR (0x0F)
@@ -17,6 +19,10 @@
 #define OPMODE_STDBY       (0b11111001)
 #define OPMODE_SLEEP       (0b11111000)
 #define OPMODE_RXSINGLE    (0b11111110)
+#define TXDONE_BIT         3
+#define RXTIMEOUT_BIT      7
+#define RXDONE_BIT         6
+#define LORAMODE_BIT       7
 
 // User macros/constants
 #define USER_SET_BIT(byte, nBit) (byte |= (1 << nBit))
@@ -67,9 +73,9 @@ static_assert(USER_ARRAY_LEN(SPI_STATUS_MAP) == 4, "Number of mapped HAL => SPI_
 // General status codes for SX1276 RF transactions.
 typedef enum {
     PACKET_OK,
-    PACKET_TIMEOUT,
     PACKET_CRC_INVALID,
     PACKET_BAD_HEADER,
+    PACKET_RX_STATUS_COUNT,
 } Packet_RX_Status;
 
 /**
@@ -80,13 +86,13 @@ SPI_Status sx1276_entry();
 /**
   * @brief  Transmit address byte and receieve data over SPI to the SX1276.
   * @param  hspi pointer to a SPI module configuration structure
-  * @param  to_send Pointer to the data to send over SPI
+  * @param  reg Register number to read from over SPI
   * @param  to_recv Pointer to storage for received data over SPI
   * @param  spi_tx_timeout Transaction timeout
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay);
+SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay);
 
 /**
   * @brief  Transmit data over SPI to the SX1276.
@@ -106,17 +112,18 @@ SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_
 void sx1276_transmit_packet(Radio_Chip_Ctx ctx);
 
 /**
- * @brief  Receive a LoRa packet over the air.
+ * @brief  Transmit a LoRa packet over the air.
+ * @param  ctx Chip context
  * @return Packet reception status
  */
-Packet_RX_Status sx1276_receive_packet();
+Packet_RX_Status sx1276_receive_packet(Radio_Chip_Ctx ctx);
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
   * @param  checksum CRC hash of the received packet
   * @return Whether the CRC hash is valid or not
   */
-bool sx1276_is_last_packet_valid(uint16_t checksum);
+bool sx1276_is_crc_valid(uint16_t checksum);
 
 /**
   * @brief  Checks if the TxDone interrupt is tripped.
@@ -124,6 +131,13 @@ bool sx1276_is_last_packet_valid(uint16_t checksum);
   * @return True if interrupt is set and false otherwise. 
   */
 bool sx1276_is_tx_done(Radio_Chip_Ctx ctx);
+
+/**
+  * @brief  Checks if the RxDone or RxTimeout interrupt is tripped.
+  * @param  ctx Chip context
+  * @return True if either interrupt is set and false otherwise. 
+  */
+bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx);
 
 /**
   * @brief Reset the SX1276. See Section 5.2.2 for more details.
