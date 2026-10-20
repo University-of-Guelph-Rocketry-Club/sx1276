@@ -25,11 +25,14 @@
 #define USER_ARRAY_LEN(array) (sizeof(array) / sizeof(array[0]))
 // Clears the op mode bits then sets the new ones.
 #define SET_OPMODE(op_mode, new_op_mode) ((op_mode & 0xF8) | (new_op_mode & 0x07))
+// For changing the MSB (wnr bit) of the address byte to enable R/W permissions.
+// - MSB = 0 for read
+// - MSB = 1 for write
 #define SET_READABLE(address_byte) USER_CLEAR_BIT(address_byte, 7)
 #define SET_WRITEABLE(address_byte) USER_SET_BIT(address_byte, 7)
 const uint8_t SPI_MAX_TX_TIMEOUT  = 10; // 10ms delay for TX timeout
 const uint8_t SPI_MAX_RETRY_DELAY = 10; // 10ms TX retry delay
-const uint8_t SPI_MAX_RETRIES     = 1;  // Max amount of TX retries. FIXME: Change this once Aban gets back about a good value for this.
+const uint8_t SPI_MAX_RETRIES     = 3;  // Max amount of TX retries. FIXME: Change this once Aban gets back about a good value for this.
 
 // SPI handle initialized through the STM32 generated code.
 extern SPI_HandleTypeDef hspi2;
@@ -41,6 +44,7 @@ typedef struct {
 } Radio_Chip_Ctx;
 
 // General status codes for SX1276 SPI transactions.
+// Same as the HAL ones but includes a BAD_ID code for debugging purposes.
 typedef enum {
     SPI_OK,
     SPI_ERROR,
@@ -51,12 +55,14 @@ typedef enum {
 } SPI_Status;
 
 // Compatibility between "custom" statuses and the HAL default ones.
-SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT] = {
+SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT - 1] = {
     [HAL_OK]      = SPI_OK,
     [HAL_ERROR]   = SPI_ERROR,
     [HAL_BUSY]    = SPI_BUSY,
     [HAL_TIMEOUT] = SPI_TIMEOUT,
 };
+#include <assert.h>
+static_assert(USER_ARRAY_LEN(SPI_STATUS_MAP) == 4, "Number of mapped HAL => SPI_Status codes has changed!");
 
 // General status codes for SX1276 RF transactions.
 typedef enum {

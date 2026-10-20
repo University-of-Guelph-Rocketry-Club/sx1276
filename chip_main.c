@@ -12,7 +12,6 @@ SPI_Status sx1276_entry()
   
     // Get version ID from the chip then go into LoRa + Standby mode. If ID is bad, exit immediately.
     address_byte = REG_VERSION;
-    SET_READABLE(address_byte, 7); // Set wnr to READ (0)
     uint8_t version = 0xcc;
     if (ok = sx1276_read(&hspi2, &address_byte, &version, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
 
@@ -28,7 +27,6 @@ SPI_Status sx1276_entry()
 
     // Get the initial op mode value
     address_byte = REG_OPMODE;
-    SET_READABLE(address_byte); // Set wnr to READ (0)
     uint8_t op_mode = 0;
     if (ok = sx1276_read(&hspi2, &address_byte, &op_mode, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
     printf("Got op mode: %#08x\n", op_mode);
@@ -40,7 +38,6 @@ SPI_Status sx1276_entry()
     
     // Set the address for RegOpMode with write permissions.
     address_byte = REG_OPMODE;
-    SET_WRITEABLE(address_byte);
     uint8_t sleep_tx[2]  = {address_byte, sleep_data};
     uint8_t lora_tx[2]   = {address_byte, lora_data};
     uint8_t stdby_tx[2]  = {address_byte, standby_data};
@@ -56,13 +53,11 @@ SPI_Status sx1276_entry()
     
     // Configure TX FIFO pointer to point to base (0).
     address_byte = REG_FIFOTXBASEADDR;
-    SET_WRITEABLE(address_byte);
     uint8_t fifoptraddr_set_tx[2] = {address_byte, 0x00};
     if (ok = sx1276_write(&hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
 
     // Configure RX FIFO pointer to point to base (0).
     address_byte = REG_FIFORXBASEADDR;
-    SET_WRITEABLE(address_byte);
     fifoptraddr_set_tx[0] = address_byte;
     if (ok= sx1276_write(&hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
 
@@ -84,6 +79,8 @@ SPI_Status sx1276_entry()
   */
 SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
 {
+    // Set write permissions to address byte.
+    SET_WRITEABLE(to_send[0]);
     HAL_StatusTypeDef res = 0;
     // FIXME: Change this once Aban gets back about a good value for this.
     uint8_t retries = 0;
@@ -111,6 +108,8 @@ SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_
   */
 SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay)
 {
+    // Set read permissions to address byte.
+    SET_READABLE(*to_send);
     HAL_StatusTypeDef res = 0;
     // FIXME: Change this once Aban gets back about a good value for this.
     uint8_t retries = 0;
@@ -147,13 +146,13 @@ transmit_retry:
 
 
     // Get packet bytes and extract payload length from 15th bit.
+    // TODO: Ensure that the packet is actually a packed structure with no padding otherwise this won't work!!!!!!!!
     uint8_t packet_bytes = (*uint8_t)p;
     uint8_t payload_length = packet_bytes[15];
     
     // Write data to FIFO buffer over SPI
     // 1. Set RegPayloadLength to be the number of bytes to be sent.
     uint8_t address_byte = REG_PAYLOADLENGTH;
-    SET_WRITEABLE(address_byte);
     uint8_t payload_length_tx[2] = { address_byte, payload_length };
     if (sx1276_write(&hspi2, payload_length_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
         goto transmit_retry;
@@ -161,7 +160,6 @@ transmit_retry:
 
     // 2. Write RegPayloadLength bytes to RegFifo
     address_byte = REG_FIFO;
-    SET_WRITEABLE(address_byte);
     for (int i = 0; i < packet_length; i++) {
         // NOTE: address_byte SHOULD be automatically incremented, per Section 4.1.2.3.
         uint8_t payload_write_tx = {address_byte, packet_bytes[i]};
@@ -172,7 +170,6 @@ transmit_retry:
 
     // 3. Go into TX mode
     address_byte = REG_OPMODE;
-    SET_WRITEABLE(address_byte);
     ctx.mode = SET_OPMODE(ctx.mode, OPMODE_TX);
     uint8_t tx_mode_tx[2] = {address_byte, ctx.mode};
     sx1276_write(&hspi2, tx_mode_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
@@ -230,14 +227,12 @@ bool sx1276_is_last_packet_valid(uint16_t checksum)
 bool sx1276_is_tx_done()
 {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0;
-    SET_READABLE(address_byte);
     if (sx1276_read(&hspi2, &address_byte, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return false;
 
     uint8_t txdone = USER_GET_BIT(irqflags, 3);
     if (txdone) {
         // Clear the IRQ then return.
         USER_SET_BIT(irqflags, 3);
-        SET_WRITEABLE(address_byte);
         uint8_t irqset_tx[2] = {address_byte, irqflags};
         sx1276_write(&hspi2, irqset_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
         return true;
