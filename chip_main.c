@@ -80,7 +80,6 @@ SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_
     // Set write permissions to address byte.
     SET_WRITEABLE(to_send[0]);
     HAL_StatusTypeDef res = 0;
-    // FIXME: Change this once Aban gets back about a good value for this.
     uint8_t retries = 0;
     while (retries != SPI_MAX_RETRIES) {
         // Always sending the address and value to write.
@@ -109,7 +108,6 @@ SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_r
     // Set read permissions to address byte.
     SET_READABLE(*to_send);
     HAL_StatusTypeDef res = 0;
-    // FIXME: Change this once Aban gets back about a good value for this.
     uint8_t retries = 0;
     while (retries != SPI_MAX_RETRIES) {
         // Always sending the address getting some byte value back.
@@ -125,11 +123,12 @@ SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_r
 }
 
 /**
- * @brief Transmit a LoRa packet over the air.
- * @param ctx Chip context
- * @param p   Packet to transmit
+ * @brief  Transmit a LoRa packet over the air.
+ * @param  ctx Chip context
+ * @param  p   Packet to transmit
+ * @return Packet transmission status
  */
-void sx1276_transmit_packet(Radio_Chip_Ctx ctx)
+Packet_Status sx1276_transmit_packet(Radio_Chip_Ctx ctx)
 {
     // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
 
@@ -137,10 +136,8 @@ void sx1276_transmit_packet(Radio_Chip_Ctx ctx)
     // TODO: Set recipient ID, packet size, packet command, and the payload itself (probably depending on the command).
     packet p = {};
     uint8_t recipient_id = 0;
-    bool ok = gsc_packet_create_standalone_request(&p, &recipient_id, GSC_RAW_DATA);
-    if (!ok) {
-        goto transmit_retry;
-    }
+    // TODO: Change the satellite command here when needed!
+    gsc_packet_create_standalone_request(&p, &recipient_id, GSC_RAW_DATA);
 
     // Get packet bytes and extract payload length from 15th bit.
     // TODO: Ensure that the packet is actually a packed structure with no padding otherwise this won't work!!!!!!!!
@@ -173,16 +170,18 @@ transmit_retry:
 
     // 3. Go into TX mode
     address_byte = REG_OPMODE;
-    ctx.mode = SET_OPMODE(ctx.mode, OPMODE_TX);
+    ctx->mode = SET_OPMODE(ctx->mode, OPMODE_TX);
     uint8_t tx_mode_tx[2] = {address_byte, ctx.mode};
     sx1276_write(&hspi2, tx_mode_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
 
     // 4. Wait until IRQ TxDone before exiting
-    while (!sx1276_is_txdone()) {
-        continue;
-    }
+    SPI_Status txdone_ok;
+    while (!sx1276_is_txdone()) {}
+    if (txdone_ok == SPI_TIMEOUT) return PACKET_TIMEOUT;
 
     // Now in standby mode once TX is done.
+    ctx->mode = SET_OPMODE(ctx->mode, OPMODE_STDBY);
+    return PACKET_OK;
 }
 
 /**
@@ -190,7 +189,7 @@ transmit_retry:
  * @param  ctx Chip context
  * @return Packet reception status
  */
-Packet_RX_Status sx1276_receive_packet(Radio_Chip_Ctx ctx)
+Packet_Status sx1276_receive_packet(Radio_Chip_Ctx *ctx)
 {
     // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
     uint8_t address_byte = 0;
@@ -198,12 +197,14 @@ Packet_RX_Status sx1276_receive_packet(Radio_Chip_Ctx ctx)
     // NOTE: After receiving the packet, we are put into standby mode. Steps are shown in Section 4.1.6:
     // 1. (Assuming single request) Go into Rx Single mode
     address_byte = REG_OPMODE;
-    ctx.mode = SET_OPMODE(ctx.mode, OPMODE_RXSINGLE);
+    ctx->mode = SET_OPMODE(ctx->mode, OPMODE_RXSINGLE);
     uint8_t rxsingle_mode_tx[2] = {address_byte, ctx.mode};
     sx1276_write(&hspi2, rxsingle_mode_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
 
     // 2. Wait for RxDone or RxTimeout IRQ
-    while (!sx1276_is_rxdone_or_rxtimeout()) {}
+    SPI_Status rxdone_ok;
+    while (!sx1276_is_rxdone_or_rxtimeout(ctx, &rxdone_ok)) {}
+    if (rxdone_ok == SPI_TIMEOUT) return PACKET_TIMEOUT;
 
 receive_retry:
     // 3. Set RegFifoAddrPtr to RegFifoRxCurrentAddr, then read RegFifo over SPI, RegRxNbBytes times (number of bytes received).
@@ -232,7 +233,11 @@ fifo_read_retry:
     uint16_t checksum = __builtin_bswap16(checksum_be);
     if (!sx1276_is_crc_valid(checksum)) return PACKET_CRC_INVALID;
 
-    // TODO: Do other stuff with the packet data?
+    // TODO: Do other stuff with the packet data? Switch case of satellite commands?
+
+    // Save mode and return ok.
+    ctx->mode = SET_OPMODE(ctx->mode, OPMODE_STDBY);
+    return PACKET_OK;
 }
 
 /**
@@ -253,17 +258,19 @@ bool sx1276_is_crc_valid(uint16_t checksum)
   */
 bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
 {
-    uint8_t address_byte = REG_IRQFLAGS, irqflags = 0;
-    local_persist uint8_t retries = 0;
+    uint8_t address_byte = REG_IRQFLAGS, irqflags = 0, retries = 0;
     if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
         retries += 1;
         if (retries == SPI_MAX_RETRIES) {
             *read_status = SPI_TIMEOUT;
-            return false;
+            // NOTE: This is a "fake" true return.
+            // We return 'true' to exit the spin "lock" of waiting on this IRQ clear operatoin.
+            return true;
         } else {
             goto irq_retry;
         }
     }
+    *read_status = SPI_OK;
 
     uint8_t txdone = USER_GET_BIT(irqflags, TXDONE_BIT);
     if (txdone) {
@@ -283,18 +290,21 @@ bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
   */
 bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx, SPI_Status *read_status)
 {
-    uint8_t address_byte = REG_IRQFLAGS, irqflags = 0;
-    local_persist uint8_t retries = 0;
+    uint8_t address_byte = REG_IRQFLAGS, irqflags = 0, retries = 0;
 irq_retry:
     if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) {
         retries += 1;
         if (retries == SPI_MAX_RETRIES) {
             *read_status = SPI_TIMEOUT;
-            return false;
+            // NOTE: This is a "fake" true return.
+            // We return 'true' to exit the spin "lock" of waiting on this IRQ clear operatoin.
+            return true;
         } else {
             goto irq_retry;
         }
     }
+    *read_status = SPI_OK;
+
     uint8_t rxdone = USER_GET_BIT(irqflags, RXDONE_BIT);
     uint8_t rxtimeout = USER_GET_BIT(irqflags, RXTIMEOUT_BIT);
     if (rxdone || rxtimeout) {

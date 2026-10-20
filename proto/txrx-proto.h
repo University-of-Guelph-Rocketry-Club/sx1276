@@ -5,8 +5,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// FIXME: Get rid of this so we can compile the driver!!!!!!!!!!!
-#include "body/heartbeat.h"
+// NOTE: Unused (probably)
+typedef struct {
+    uint64_t time;
+    char message[32];
+} heartbeatBody;
 
 #define GSC_PROTOCOL_VERSION 1u
 #define GSC_MAGIC_STRING "GSRP" // guelph space research protocol!
@@ -23,7 +26,7 @@
 
 #define PACKET_MAX_PAYLOAD GSC_MAX_PAYLOAD_SIZE
 
-// Define YOUR identity here. 0xFF is a placeholder, change in production.
+// TODO: Define YOUR identity here. 0xFF is a placeholder, change in production.
 #define GSC_IDENTITY 0xFFu
 #define GSC_BROADCAST_ID 0xFFu
 
