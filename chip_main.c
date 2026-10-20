@@ -13,7 +13,7 @@ SPI_Status sx1276_entry()
     uint8_t address_byte = REG_VERSION;
     SET_READABLE(address_byte, 7); // Set wnr to READ (0)
     uint8_t version = 0xcc;
-    if (sx1276_read(hspi2, &address_byte, &version, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (ok = sx1276_read(hspi2, &address_byte, &version, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
 
     // Check version ID (0x12 is default)
     if (version == 0x00 || version == 0xFF) {
@@ -29,7 +29,7 @@ SPI_Status sx1276_entry()
     address_byte = REG_OPMODE;
     SET_READABLE(address_byte); // Set wnr to READ (0)
     uint8_t op_mode = 0;
-    if (sx1276_read(hspi2, &address_byte, &op_mode, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (ok = sx1276_read(hspi2, &address_byte, &op_mode, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
     printf("Got op mode: %#08x\n", op_mode);
 
     // Go into LoRa mode by first entering SLEEP mode then setting the 7th bit (MSB) of the RegOpMode register (0x01). See Section 4.4 of the datasheet.
@@ -45,11 +45,11 @@ SPI_Status sx1276_entry()
     uint8_t stdby_tx[2]  = {address_byte, standby_data};
 
     // Go into SLEEP mode first to *then* go into LoRa mode.
-    if (sx1276_write(&hspi2, sleep_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
-    if (sx1276_write(&hspi2, lora_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
+    if (ok = sx1276_write(&hspi2, sleep_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
+    if (ok =sx1276_write(&hspi2, lora_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok; 
   
     // Set op mode to standby again, but now with LoRa on. Save the mode too.
-    if (sx1276_write(&hspi2, stdby_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR; 
+    if (ok = sx1276_write(&hspi2, stdby_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok; 
     printf("In LoRa mode, standing by: op mode: %#08x\n", standby_data);
     ctx.mode = standby_data;
     
@@ -57,13 +57,13 @@ SPI_Status sx1276_entry()
     uint8_t address_byte = REG_FIFOTXBASEADDR;
     SET_WRITEABLE(address_byte);
     uint8_t fifoptraddr_set_tx = { address_byte, 0x00 };
-    if (sx1276_write(hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (ok = sx1276_write(hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
 
     // Configure RX FIFO pointer to point to base (0).
     address_byte = REG_FIFORXBASEADDDR;
     SET_WRITEABLE(address_byte);
     fifoptraddr_set_tx[0] = address_byte;
-    if (sx1276_write(hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY) != SPI_OK) return SPI_GENERAL_ERROR;
+    if (ok= sx1276_write(hspi2, fifoaddrptr_set_tx, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY); ok != SPI_OK) return ok;
 
     //
     // NOTE: Frequency is already set at 434MHz by default, so we won't even change it.
@@ -253,7 +253,9 @@ bool sx1276_is_tx_done()
 
     uint8_t txdone = USER_GET_BIT(irqflags, 3);
     if (txdone) {
-        // TODO: Clear the IRQ
+        // Clear the IRQ then return.
+        USER_SET_BIT(irqflags, 3);
+        sx1276_write(hspi2, &address_byte, &irqflags, SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY);
         return true;
     }
 }
