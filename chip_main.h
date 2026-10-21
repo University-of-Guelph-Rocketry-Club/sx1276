@@ -40,6 +40,7 @@
 const uint8_t SPI_MAX_TX_TIMEOUT  = 10; // 10ms delay for TX timeout
 const uint8_t SPI_MAX_RETRY_DELAY = 10; // 10ms TX retry delay
 const uint8_t SPI_MAX_RETRIES     = 3;  // Max amount of TX retries.
+#define SPI_DEFAULT_OPTS SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY
 
 // SPI handle initialized through the STM32 generated code.
 extern SPI_HandleTypeDef hspi2;
@@ -92,7 +93,7 @@ SPI_Status sx1276_entry();
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay);
+SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
 
 /**
   * @brief  Transmit data over SPI to the SX1276.
