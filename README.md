@@ -18,3 +18,6 @@ st-flash write driver.bin 0x8000000
 
 # Contributing
 Feel free to submit PRs to the driver. Do not submit PRs to the protocol since it is vendored source code and is managed elsewhere (See txrx repository).
+
+The [TODO.md](TODO.md) file on this repository contains tasks/features that require work/implementation.
+- If the project gets large enough I might migrate over to [tatr](https://github.com/tsoding/tatr).
