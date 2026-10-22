@@ -1,8 +1,5 @@
 #include "chip_main.h"
 
-/**
-  * @brief SX1276 entry point, called from Core/Src/main.c. Validates the SX1276 ID then configures the chip for LoRa mode and CRC generation, then halts.
-  */
 SPI_Status sx1276_entry()
 {
     // Init chip context and variables for SPI TX.
@@ -63,18 +60,10 @@ SPI_Status sx1276_entry()
     // NOTE: Frequency is already set at 434MHz by default, so we won't even change it.
     //
 
-    // Finished, halt.
+    // Finished. Entry driver loop.
     while (1) {}
 }
 
-/**
-  * @brief  Transmit data over SPI to the SX1276.
-  * @param  hspi pointer to a SPI module configuration structure
-  * @param  to_send Pointer to the data to send over SPI
-  * @param  spi_tx_timeout Transaction timeout
-  * @param  spi_delay_timeout Transaction replay delay, in case of errors
-  * @retval SPI transaction status
-  */
 SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
 {
     // Set write permissions to address byte.
@@ -94,15 +83,6 @@ SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_
     return SPI_STATUS_MAP[res];
 }
 
-/**
-  * @brief  Transmit address byte and receieve data over SPI to the SX1276.
-  * @param  hspi pointer to a SPI module configuration structure
-  * @param  reg Register number to read from over SPI
-  * @param  to_recv Pointer to storage for received data over SPI
-  * @param  spi_tx_timeout Transaction timeout
-  * @param  spi_delay_timeout Transaction replay delay, in case of errors
-  * @retval SPI transaction status
-  */
 SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay)
 {
     // Set read permissions to address byte.
@@ -122,12 +102,6 @@ SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_r
     return SPI_STATUS_MAP[res];
 }
 
-/**
- * @brief  Transmit a LoRa packet over the air.
- * @param  ctx Chip context
- * @param  p   Packet to transmit
- * @return Packet transmission status
- */
 Packet_Status sx1276_transmit_packet(Radio_Chip_Ctx ctx)
 {
     // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
@@ -184,11 +158,6 @@ transmit_retry:
     return PACKET_OK;
 }
 
-/**
- * @brief  Transmit a LoRa packet over the air.
- * @param  ctx Chip context
- * @return Packet reception status
- */
 Packet_Status sx1276_receive_packet(Radio_Chip_Ctx *ctx)
 {
     // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
@@ -225,6 +194,11 @@ fifo_read_retry:
     }
     packet *p = (*packet)fifo_data;
 
+    // Validate known CRC hash against received output to check for corrupt data.
+    if (!sx1276_is_crc_valid(p->body, p->header.body_size, p->checksum)) {
+        return PACKET_CRC_INVALID;
+    }
+
     // Get little endian values for the CRC and packet ID.
     // TODO: Check compiled code to see what instructions get generated? Probably 'REV' or maybe 'RBIT'?
     uint64_t packet_id_be = p->header.packet_id;
@@ -240,22 +214,12 @@ fifo_read_retry:
     return PACKET_OK;
 }
 
-/**
-  * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
-  * @param  checksum CRC hash of the received packet
-  * @return Whether the CRC hash is valid or not
-  */
-bool sx1276_is_crc_valid(uint16_t checksum)
+bool sx1276_is_crc_valid(uint8_t* body, uint16_t len, uint16_t checksum)
 {
-    // TODO: Check CRC hash inside of packed payload through MANTLE protocol
+    if (gen_crc16(body, len) != checksum) return false;
+    return true;
 }
 
-/**
-  * @brief  Checks if the TxDone interrupt is tripped.
-  * @param  ctx Chip context
-  * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
-  * @return True if interrupt is set and false otherwise. 
-  */
 bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
 {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0, retries = 0;
@@ -282,12 +246,6 @@ bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
     }
 }
 
-/**
-  * @brief  Checks if the RxDone or RxTimeout interrupt is tripped.
-  * @param  ctx Chip context
-  * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
-  * @return True if either interrupt is set and false otherwise.
-  */
 bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx, SPI_Status *read_status)
 {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0, retries = 0;
@@ -317,9 +275,6 @@ irq_retry:
     }
 }
 
-/**
-  * @brief Reset the SX1276. See Section 5.2.2 for more details.
-  */
 void sx1276_reset()
 {
     // Pull Pin 7 low for 100us, then release, then delay for 5ms.

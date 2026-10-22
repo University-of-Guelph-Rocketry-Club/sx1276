@@ -1,6 +1,8 @@
 #include "Core/Inc/main.h"
+// TODO: Change this identity value as needed? Maybe modify during build time?
+#define GSC_IDENTITY 0x01
 #include "proto/txrx-proto.h"
-#include "proto/checksum.h"
+#include "proto/crc.h"
 #include <assert.h>
 #include <stdbool.h>
 
@@ -81,6 +83,7 @@ typedef enum {
 
 /**
   * @brief SX1276 entry point, called from Core/Src/main.c. Validates the SX1276 ID then configures the chip for LoRa mode and CRC generation, then halts.
+  * @return SPI TX status for any failing init command, otherwise returns SPI_OK once driver exits.
   */
 SPI_Status sx1276_entry();
 
@@ -122,10 +125,12 @@ Packet_Status sx1276_receive_packet(Radio_Chip_Ctx *ctx);
 
 /**
   * @brief  Check validity of CRC hash on packet reception through the PayloadCrcError Irq flag (Section 4.1.1.6).
+  * @param  body Packet body to hash and validate
+  * @param  len Length of the body data buffer
   * @param  checksum CRC hash of the received packet
   * @return Whether the CRC hash is valid or not
   */
-bool sx1276_is_crc_valid(uint16_t checksum);
+bool sx1276_is_crc_valid(uint8_t* body, uint16_t len, uint16_t checksum);
 
 /**
   * @brief  Checks if the TxDone interrupt is tripped.
