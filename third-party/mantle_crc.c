@@ -1,10 +1,16 @@
-/* https://reveng.sourceforge.io/crc-catalogue/16.htm#crc.cat-bits.16 */
-/* https://stackoverflow.com/questions/10564491/function-to-calculate-a-crc16-checksum */
+/* https://reveng.sourceforge.io/crc-catalogue/16.htm#crc.cat-bits.16 
+   https://stackoverflow.com/questions/10564491/function-to-calculate-a-crc16-checksum 
+   
+   This file provides a bit-at-a-time CRC-16 implimentation, i.e.
+   CRC-16/BUYPASS (aka CRC-16/ARC-poly, “CRC-16/UMTS”)
+   Poly is defined in the header file.
+
+*/
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "crc.h"
+#include "mantle_crc.h"
 
 uint16_t gen_crc16(const uint8_t *data, uint16_t size)
 {

@@ -37,8 +37,8 @@ BUILD_DIR = build
 # C sources
 C_SOURCES =  \
 chip_main.c \
-proto/txrx-proto.c \
-proto/crc.c \
+third-party/mantle.c \
+third-party/mantle_crc.c \
 Core/Src/main.c \
 Core/Src/stm32f4xx_it.c \
 Core/Src/stm32f4xx_hal_msp.c \

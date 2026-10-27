@@ -109,14 +109,13 @@ Packet_Status sx1276_transmit_packet(Radio_Chip_Ctx ctx)
     // Construct packet.
     // TODO: Set recipient ID, packet size, packet command, and the payload itself (probably depending on the command).
     packet p = {};
-    uint8_t recipient_id = 0;
+    uint8_t dest_id = 0x01;
+    uint8_t body[] = "Hello";
+    uint8_t body_len = strlen(body) + 1;
+    // NOTE: This is dummy code for just making the packet.
+    if (gsc_new_packet(&p, dest_id, GSC_RAW_DATA, body, body_len)) {
+    }
     // TODO: Change the satellite command here when needed!
-    gsc_packet_create_standalone_request(&p, &recipient_id, GSC_RAW_DATA);
-
-    // Get packet bytes and extract payload length from 15th bit.
-    // TODO: Ensure that the packet is actually a packed structure with no padding otherwise this won't work!!!!!!!!
-    uint8_t packet_bytes = (*uint8_t)p;
-    uint8_t payload_length = packet_bytes[15];
     
 transmit_retry:
     // Write data to FIFO buffer over SPI

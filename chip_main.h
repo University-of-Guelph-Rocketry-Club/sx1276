@@ -1,8 +1,6 @@
 #include "Core/Inc/main.h"
-// TODO: Change this identity value as needed? Maybe modify during build time?
 #define GSC_IDENTITY 0x01
-#include "proto/txrx-proto.h"
-#include "proto/crc.h"
+#include "third-party/mantle.h"
 #include <assert.h>
 #include <stdbool.h>
 
