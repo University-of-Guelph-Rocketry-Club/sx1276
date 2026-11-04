@@ -1,4 +1,15 @@
+#include <string.h>
+#include <stdio.h>
 #include "chip_main.h"
+
+// Compatibility between "custom" statuses and the HAL default ones.
+const SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT - 1] = {
+    [HAL_OK]      = SPI_OK,
+    [HAL_ERROR]   = SPI_ERROR,
+    [HAL_BUSY]    = SPI_BUSY,
+    [HAL_TIMEOUT] = SPI_TIMEOUT,
+};
+static_assert(USER_ARRAY_LEN(SPI_STATUS_MAP) == 4, "Number of mapped HAL => SPI_Status codes has changed!");
 
 SPI_Status sx1276_entry()
 {
@@ -9,7 +20,8 @@ SPI_Status sx1276_entry()
   
     // Get version ID from the chip then go into LoRa + Standby mode. If ID is bad, exit immediately.
     uint8_t version = 0xcc;
-    if (ok = sx1276_read(&hspi2, REG_VERSION, &version, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok;
+    ok = sx1276_read(&hspi2, REG_VERSION, &version, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok;
 
     // Check version ID (0x12 is default)
     if (version == 0x00 || version == 0xFF) {
@@ -17,13 +29,14 @@ SPI_Status sx1276_entry()
         return SPI_BAD_ID;
     } else {
         // Green LED on.
-        chip.id = version;
+        ctx.id = version;
         HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
     }
 
     // Get the initial op mode value
     uint8_t op_mode = 0;
-    if (ok = sx1276_read(&hspi2, REG_OPMODE, &op_mode, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok;
+    ok = sx1276_read(&hspi2, REG_OPMODE, &op_mode, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok;
     printf("Got op mode: %#08x\n", op_mode);
 
     // Go into LoRa mode by first entering SLEEP mode then setting the 7th bit (MSB) of the RegOpMode register (0x01). See Section 4.4 of the datasheet.
@@ -38,43 +51,50 @@ SPI_Status sx1276_entry()
     uint8_t stdby_tx[2]  = {address_byte, standby_data};
 
     // Go into SLEEP mode first to *then* go into LoRa mode.
-    if (ok = sx1276_write(&&hspi2, sleep_tx, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok;
-    if (ok = sx1276_write(&&hspi2, lora_tx, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok; 
+    ok = sx1276_write(&hspi2, sleep_tx, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok;
+    ok = sx1276_write(&hspi2, lora_tx, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok; 
   
     // Set op mode to standby again, but now with LoRa on. Save the mode too.
-    if (ok = sx1276_write(&&hspi2, stdby_tx, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok; 
+    ok = sx1276_write(&hspi2, stdby_tx, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok; 
     printf("In LoRa mode, standing by: op mode: %#08x\n", standby_data);
     ctx.mode = standby_data;
     
     // Configure TX FIFO pointer to point to base (0).
     address_byte = REG_FIFOTXBASEADDR;
     uint8_t fifoptraddr_set_tx[2] = {address_byte, 0x00};
-    if (ok = sx1276_write(&hspi2, fifoaddrptr_set_tx, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok;
+    ok = sx1276_write(&hspi2, fifoptraddr_set_tx, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok;
 
     // Configure RX FIFO pointer to point to base (0).
     address_byte = REG_FIFORXBASEADDR;
     fifoptraddr_set_tx[0] = address_byte;
-    if (ok = sx1276_write(&hspi2, fifoaddrptr_set_tx, SPI_DEFAULT_OPTS); ok != SPI_OK) return ok;
+    ok = sx1276_write(&hspi2, fifoptraddr_set_tx, SPI_DEFAULT_OPTS);
+    if (ok != SPI_OK) return ok;
 
     //
     // NOTE: Frequency is already set at 434MHz by default, so we won't even change it.
     //
 
     // Finished. Entry driver loop.
-    while (1) {}
+    while (1) {
+        // TODO: Main chip loop logic would go here.
+    }
 }
 
-SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
+SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
 {
     // Set write permissions to address byte.
-    SET_WRITEABLE(to_send[0]);
+    SET_WRITEABLE(*to_send);
     HAL_StatusTypeDef res = 0;
     uint8_t retries = 0;
     while (retries != SPI_MAX_RETRIES) {
         // Always sending the address and value to write.
         res = HAL_SPI_Transmit(hspi, to_send, 2, spi_tx_timeout);
         if (res != HAL_OK) {
-            HAL_Delay(spi_delay_timeout);
+            HAL_Delay(spi_retry_delay);
         } else {
             return SPI_OK;
         }
@@ -83,17 +103,17 @@ SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_
     return SPI_STATUS_MAP[res];
 }
 
-SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retru_delay)
+SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retry_delay)
 {
     // Set read permissions to address byte.
-    SET_READABLE(*to_send);
+    SET_READABLE(reg);
     HAL_StatusTypeDef res = 0;
     uint8_t retries = 0;
     while (retries != SPI_MAX_RETRIES) {
         // Always sending the address getting some byte value back.
         res = HAL_SPI_TransmitReceive(hspi, &reg, to_recv, 1, spi_tx_timeout);
         if (res != HAL_OK) {
-            HAL_Delay(spi_delay_timeout);
+            HAL_Delay(spi_retry_delay);
         } else {
             return SPI_OK;
         }
@@ -102,27 +122,31 @@ SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_r
     return SPI_STATUS_MAP[res];
 }
 
-Packet_Status sx1276_transmit_packet(Radio_Chip_Ctx ctx)
+Packet_Status sx1276_transmit_packet(Radio_Chip_Ctx *ctx)
 {
     // NOTE: We always set the transmit/receieve FIFO pointers to the base (0) to use the full 256 bytes of the buffer space.
 
     // Construct packet.
     // TODO: Set recipient ID, packet size, packet command, and the payload itself (probably depending on the command).
-    packet p = {};
+    gsc_packet p = {};
     uint8_t dest_id = 0x01;
     uint8_t body[] = "Hello";
     uint8_t body_len = strlen(body) + 1;
+
     // NOTE: This is dummy code for just making the packet.
     if (gsc_new_packet(&p, dest_id, GSC_RAW_DATA, body, body_len)) {
     }
+    uint8_t packet_bytes[GSC_MAX_PACKET_SIZE] = {0};
+    size_t packet_size = gsc_packet_encode(&p, packet_bytes, GSC_MAX_PACKET_SIZE);
+
     // TODO: Change the satellite command here when needed!
     
 transmit_retry:
     // Write data to FIFO buffer over SPI
     // 1. Set RegPayloadLength to be the number of bytes to be sent.
     uint8_t address_byte = REG_PAYLOADLENGTH;
-    uint8_t payload_length_tx[2] = { address_byte, payload_length };
-    if (sx1276_write(&hspi2, payload_length_tx, SPI_DEFAULT_OPTS) != SPI_OK) {
+    uint8_t packet_size_tx[2] = { address_byte, packet_size };
+    if (sx1276_write(&hspi2, packet_size_tx, SPI_DEFAULT_OPTS) != SPI_OK) {
         goto transmit_retry;
     }
 
@@ -133,9 +157,9 @@ transmit_retry:
         goto transmit_retry;
     }
     address_byte = REG_FIFO;
-    for (int i = 0; i < packet_length; i++) {
+    for (int i = 0; i < packet_size; i++) {
         // NOTE: address_byte SHOULD be automatically incremented, per Section 4.1.2.3.
-        uint8_t payload_write_tx = {address_byte, packet_bytes[i]};
+        uint8_t payload_write_tx[2] = {address_byte, packet_bytes[i]};
         if (sx1276_write(&hspi2, payload_write_tx, SPI_DEFAULT_OPTS) != SPI_OK) {
             goto transmit_retry;
         }
@@ -144,12 +168,12 @@ transmit_retry:
     // 3. Go into TX mode
     address_byte = REG_OPMODE;
     ctx->mode = SET_OPMODE(ctx->mode, OPMODE_TX);
-    uint8_t tx_mode_tx[2] = {address_byte, ctx.mode};
+    uint8_t tx_mode_tx[2] = {address_byte, ctx->mode};
     sx1276_write(&hspi2, tx_mode_tx, SPI_DEFAULT_OPTS);
 
     // 4. Wait until IRQ TxDone before exiting
     SPI_Status txdone_ok;
-    while (!sx1276_is_txdone()) {}
+    while (!sx1276_is_tx_done(ctx, &txdone_ok)) {}
     if (txdone_ok == SPI_TIMEOUT) return PACKET_TIMEOUT;
 
     // Now in standby mode once TX is done.
@@ -166,7 +190,7 @@ Packet_Status sx1276_receive_packet(Radio_Chip_Ctx *ctx)
     // 1. (Assuming single request) Go into Rx Single mode
     address_byte = REG_OPMODE;
     ctx->mode = SET_OPMODE(ctx->mode, OPMODE_RXSINGLE);
-    uint8_t rxsingle_mode_tx[2] = {address_byte, ctx.mode};
+    uint8_t rxsingle_mode_tx[2] = {address_byte, ctx->mode};
     sx1276_write(&hspi2, rxsingle_mode_tx, SPI_DEFAULT_OPTS);
 
     // 2. Wait for RxDone or RxTimeout IRQ
@@ -181,30 +205,24 @@ receive_retry:
     SPI_Status packet_size_ok = sx1276_read(&hspi2, REG_RXNBBYTES, &packet_size, SPI_DEFAULT_OPTS);
     if (packet_size_ok != SPI_OK || curaddr_ok != SPI_OK)
         goto receive_retry;
-    }
 
 fifo_read_retry:
     // 4. Read Rx Data in FIFO buffer to local buffer then cast to packet.
-    uint8_t fifo_data[256] = {0};
+    uint8_t fifo_data[GSC_MAX_PACKET_SIZE] = {0};
     for (int i = 0; i < USER_ARRAY_LEN(fifo_data); i++) {
-        if (sx1276_read(&hspi2, REG_FIFO, fifo_data[i], SPI_DEFAULT_OPTS) != SPI_OK) {
+        if (sx1276_read(&hspi2, REG_FIFO, &fifo_data[i], SPI_DEFAULT_OPTS) != SPI_OK) {
             goto fifo_read_retry;
         }
     }
-    packet *p = (*packet)fifo_data;
+    uint32_t packet_id = 0; uint8_t source_id = 0, dest_id = 0, magic = 0, cmd = 0;
+    uint16_t checksum = 0;
+    uint8_t packet_body[GSC_MAX_PAYLOAD_SIZE] = {0}; uint8_t packet_body_size = 0;
+    gsc_packet_decode(fifo_data, &packet_id, &source_id, &dest_id, &magic, packet_body, &packet_body_size, GSC_MAX_PAYLOAD_SIZE - 1, &cmd, &checksum); 
 
     // Validate known CRC hash against received output to check for corrupt data.
-    if (!sx1276_is_crc_valid(p->body, p->header.body_size, p->checksum)) {
+    if (!sx1276_is_crc_valid(packet_body, packet_body_size, checksum)) {
         return PACKET_CRC_INVALID;
     }
-
-    // Get little endian values for the CRC and packet ID.
-    // TODO: Check compiled code to see what instructions get generated? Probably 'REV' or maybe 'RBIT'?
-    uint64_t packet_id_be = p->header.packet_id;
-    uint64_t packet_id = __builtin_bswap64(packet_id_be);
-    uint16_t checksum_be = p->checksum;
-    uint16_t checksum = __builtin_bswap16(checksum_be);
-    if (!sx1276_is_crc_valid(checksum)) return PACKET_CRC_INVALID;
 
     // TODO: Do other stuff with the packet data? Switch case of satellite commands?
 
@@ -219,17 +237,17 @@ bool sx1276_is_crc_valid(uint8_t* body, uint16_t len, uint16_t checksum)
     return true;
 }
 
-bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
-{
+bool sx1276_is_tx_done(Radio_Chip_Ctx *ctx, SPI_Status *read_status) {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0, retries = 0;
+irq_retry:
     if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_DEFAULT_OPTS) != SPI_OK) {
-        retries += 1;
         if (retries == SPI_MAX_RETRIES) {
             *read_status = SPI_TIMEOUT;
             // NOTE: This is a "fake" true return.
             // We return 'true' to exit the spin "lock" of waiting on this IRQ clear operatoin.
             return true;
         } else {
+            retries += 1;
             goto irq_retry;
         }
     }
@@ -243,20 +261,21 @@ bool sx1276_is_tx_done(Radio_Chip_Ctx ctx, SPI_Status *read_status);
         sx1276_write(&hspi2, irqset_tx, SPI_DEFAULT_OPTS);
         return true;
     }
+    return false;
 }
 
-bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx ctx, SPI_Status *read_status)
+bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx *ctx, SPI_Status *read_status)
 {
     uint8_t address_byte = REG_IRQFLAGS, irqflags = 0, retries = 0;
 irq_retry:
     if (sx1276_read(&hspi2, REG_IRQFLAGS, &irqflags, SPI_DEFAULT_OPTS) != SPI_OK) {
-        retries += 1;
         if (retries == SPI_MAX_RETRIES) {
             *read_status = SPI_TIMEOUT;
             // NOTE: This is a "fake" true return.
             // We return 'true' to exit the spin "lock" of waiting on this IRQ clear operatoin.
             return true;
         } else {
+            retries += 1;
             goto irq_retry;
         }
     }
@@ -272,6 +291,7 @@ irq_retry:
         sx1276_write(&hspi2, irqset_tx, SPI_DEFAULT_OPTS);
         return true;
     }
+    return false;
 }
 
 void sx1276_reset()

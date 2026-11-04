@@ -70,14 +70,14 @@ void memcpy_or_return(void *dst, void *src, size_t n)
     if (dst != NULL) memcpy(dst, src, n);
 }
 
-void gsc_packet_decode(void *stream, uint32_t *packet_id, uint8_t *source_id, uint8_t *dest_id, uint8_t *magic, uint8_t *body, uint16_t body_len, uint8_t *cmd, uint16_t *checksum)
+void gsc_packet_decode(void *stream, uint32_t *packet_id, uint8_t *source_id, uint8_t *dest_id, uint8_t *magic, uint8_t *body, uint8_t *body_len, uint16_t body_buffer_len, uint8_t *cmd, uint16_t *checksum)
 {
     //
     // Copy operations are done instead of assignment (loads) since these risk unaligned loads which may cause access faults or at best performance hits.
     // Memcpy gets around this by just accessing single bytes at a time for us and copying them into variable of appropriate sizes from the right packet stream offsets.
     // See mantle.h for offset information in the header and packet structures.
     //
-    
+
     memcpy_or_return(packet_id, stream + 4, 4);
     *packet_id = __builtin_bswap32(*packet_id);
     memcpy_or_return(magic, stream, 4);
@@ -89,7 +89,8 @@ void gsc_packet_decode(void *stream, uint32_t *packet_id, uint8_t *source_id, ui
     uint8_t packet_body_len = 0;
     memcpy_or_return(&packet_body_len, stream + 11, 1);
     uint8_t len = packet_body_len;
-    if (packet_body_len > body_len) len = body_len;
+    if (packet_body_len > body_buffer_len) len = body_buffer_len;
+    memcpy_or_return(body_len, &len, 1);
     memcpy_or_return(body, stream + 13, len);
     memcpy_or_return(checksum, stream + 13 + len, 2);
 }

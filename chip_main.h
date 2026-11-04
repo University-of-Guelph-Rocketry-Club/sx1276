@@ -1,3 +1,5 @@
+#ifndef CHIP_MAIN_H
+#define CHIP_MAIN_H
 #include "Core/Inc/main.h"
 #define GSC_IDENTITY 0x01
 #include "third-party/mantle.h"
@@ -37,9 +39,9 @@
 // - MSB = 1 for write
 #define SET_READABLE(address_byte) USER_CLEAR_BIT(address_byte, 7)
 #define SET_WRITEABLE(address_byte) USER_SET_BIT(address_byte, 7)
-const uint8_t SPI_MAX_TX_TIMEOUT  = 10; // 10ms delay for TX timeout
-const uint8_t SPI_MAX_RETRY_DELAY = 10; // 10ms TX retry delay
-const uint8_t SPI_MAX_RETRIES     = 3;  // Max amount of TX retries.
+#define SPI_MAX_TX_TIMEOUT  10 // 10ms delay for TX timeout
+#define SPI_MAX_RETRY_DELAY 10 // 10ms TX retry delay
+#define SPI_MAX_RETRIES     3  // Max amount of TX retries.
 #define SPI_DEFAULT_OPTS SPI_MAX_TX_TIMEOUT, SPI_MAX_RETRY_DELAY
 
 // SPI handle initialized through the STM32 generated code.
@@ -61,15 +63,6 @@ typedef enum {
     SPI_BAD_ID,
     SPI_STATUS_COUNT,
 } SPI_Status;
-
-// Compatibility between "custom" statuses and the HAL default ones.
-SPI_Status SPI_STATUS_MAP[SPI_STATUS_COUNT - 1] = {
-    [HAL_OK]      = SPI_OK,
-    [HAL_ERROR]   = SPI_ERROR,
-    [HAL_BUSY]    = SPI_BUSY,
-    [HAL_TIMEOUT] = SPI_TIMEOUT,
-};
-static_assert(USER_ARRAY_LEN(SPI_STATUS_MAP) == 4, "Number of mapped HAL => SPI_Status codes has changed!");
 
 // General status codes for SX1276 RF transactions/receptions.
 typedef enum {
@@ -94,7 +87,7 @@ SPI_Status sx1276_entry();
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
+SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, uint8_t reg, uint8_t *to_recv, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
 
 /**
   * @brief  Transmit data over SPI to the SX1276.
@@ -104,7 +97,7 @@ SPI_Status sx1276_read(SPI_HandleTypeDef *hspi, const uint8_t reg, uint8_t *to_r
   * @param  spi_delay_timeout Transaction replay delay, in case of errors
   * @retval SPI transaction status
   */
-SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, const uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
+SPI_Status sx1276_write(SPI_HandleTypeDef *hspi, uint8_t *to_send, uint32_t spi_tx_timeout, uint32_t spi_retry_delay);
 
 /**
  * @brief  Transmit a LoRa packet over the air.
@@ -136,7 +129,7 @@ bool sx1276_is_crc_valid(uint8_t* body, uint16_t len, uint16_t checksum);
   * @param  read_status SPI TX status for acquiring the RegIrqFlags register data
   * @return True if interrupt is set and false otherwise. 
   */
-bool sx1276_is_txdone(Radio_Chip_Ctx *ctx, SPI_Status *read_status);
+bool sx1276_is_tx_done(Radio_Chip_Ctx *ctx, SPI_Status *read_status);
 
 /**
   * @brief  Checks if the RxDone or RxTimeout interrupt is tripped.
@@ -150,3 +143,4 @@ bool sx1276_is_rxdone_or_rxtimeout(Radio_Chip_Ctx *ctx, SPI_Status *read_status)
   * @brief Reset the SX1276. See Section 5.2.2 for more details.
   */
 void sx1276_reset();
+#endif // CHIP_MAIN_H

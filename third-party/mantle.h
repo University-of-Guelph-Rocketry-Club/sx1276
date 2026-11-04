@@ -92,10 +92,11 @@ size_t gsc_packet_encode(gsc_packet *p, uint8_t *output, size_t output_len);
   * @param dest_id Pointer to a uint8_t to store the dest ID
   * @param magic Pointer to a buffer to store the packet magic string
   * @param body Pointer to a buffer to store the packet body
-  * @param body_len Length of the buffer to store the packet body
+  * @param body_len Pointer to a uint8_t to store the packet body
+  * @param body_buffer_len Length of the user buffer to store the packet body
   * @param cmd Pointer to a uint8_t to store the satellite command
   * @param checksum Pointer to a uint16_t to store the checksum, returned as little-endianne
   */
-void gsc_packet_decode(void *stream, uint32_t *packet_id, uint8_t *source_id, uint8_t *dest_id, uint8_t *magic, uint8_t *body, uint16_t body_len, uint8_t *cmd, uint16_t *checksum);
+void gsc_packet_decode(void *stream, uint32_t *packet_id, uint8_t *source_id, uint8_t *dest_id, uint8_t *magic, uint8_t *body, uint8_t* body_len, uint16_t body_buffer_len, uint8_t *cmd, uint16_t *checksum);
 
 #endif // MANTLE_H
