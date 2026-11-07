@@ -1,7 +1,3 @@
 build/
-Core/
-Drivers/
 driver.ioc
-startup_stm32f411xe.s
-STM32F411xx_FLASH.ld
 .mxproject
